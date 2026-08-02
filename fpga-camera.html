@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Real-Time FPGA Camera-to-VGA Video Pipeline — Tyler Kometani</title>
+<meta name="description" content="Case study: a processorless OV7670-to-VGA video pipeline built in VHDL on a Nexys A7-100T FPGA, covering the capture FSM, dual-port frame buffer, clock domains, and BRAM-latency debugging.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Real-Time FPGA Camera-to-VGA Video Pipeline">
+<meta property="og:description" content="Processorless OV7670 video capture and display on a Nexys A7-100T FPGA, built in VHDL.">
+<link rel="icon" href="../assets/icons/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+
+<a href="#main" class="skip-link">Skip to main content</a>
+
+<header class="site-header">
+  <div class="container nav">
+    <a href="../index.html" class="wordmark">Tyler Kometani<span class="dot">.</span></a>
+    <nav aria-label="Primary">
+      <ul class="nav-links">
+        <li><a href="../index.html#about">About</a></li>
+        <li><a href="../index.html#projects">Projects</a></li>
+        <li><a href="../index.html#capabilities">Capabilities</a></li>
+        <li><a href="../index.html#contact">Contact</a></li>
+      </ul>
+    </nav>
+    <a href="../assets/documents/resume.pdf" class="nav-cta desktop-only" download>Résumé</a>
+    <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-controls="mobileMenu" aria-label="Open menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="mobile-menu" id="mobileMenu">
+    <ul>
+      <li><a href="../index.html#about">About</a></li>
+      <li><a href="../index.html#projects">Projects</a></li>
+      <li><a href="../index.html#capabilities">Capabilities</a></li>
+      <li><a href="../index.html#contact">Contact</a></li>
+    </ul>
+    <a href="../assets/documents/resume.pdf" class="nav-cta" download>Download Résumé</a>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="case-hero">
+    <div class="container">
+      <div class="breadcrumb"><a href="../index.html">Home</a> / <a href="../index.html#featured-project">Featured Project</a> / FPGA Camera Pipeline</div>
+      <h1>Real-Time FPGA Camera-to-VGA Video Pipeline</h1>
+      <div class="subtitle">Processorless OV7670 video capture and display on a Nexys A7-100T FPGA</div>
+      <p class="lede">A course project (CPE 487, Spring 2026, Prof. Byett) that configures an OV7670 camera over SCCB/I2C, reconstructs its pixel stream into 12-bit RGB, buffers complete frames in dual-port Block RAM, and renders a scaled, centered VGA output — with capture, buffering, scaling, and display running entirely in FPGA logic, no processor in the data path.</p>
+      <div class="case-hero-actions">
+        <a href="https://github.com/tkometani0512/OV7670-Nexys-A7-100T-Final-Project" class="btn btn-primary" target="_blank" rel="noopener">View Repository →</a>
+        <a href="../index.html#contact" class="btn btn-outline">Contact Me</a>
+      </div>
+      <nav class="case-toc" aria-label="On this page">
+        <a href="#overview">Overview</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#fsm">Capture FSM</a>
+        <a href="#clocks">Clock Domains</a>
+        <a href="#buffer">Frame Buffer</a>
+        <a href="#scaling">Scaling &amp; Centering</a>
+        <a href="#latency">BRAM Latency</a>
+        <a href="#sccb">SCCB Config</a>
+        <a href="#controls">Hardware Controls</a>
+        <a href="#results">Results</a>
+        <a href="#improvements">Remaining Improvements</a>
+      </nav>
+    </div>
+  </section>
+
+  <!-- OVERVIEW -->
+  <section class="case-section" id="overview">
+    <div class="container prose">
+      <h2>Overview</h2>
+      <p>This project captures live 320×240 video from an OV7670 camera and displays it on a standard VGA monitor using a Nexys A7-100T FPGA. The camera feed is captured in real time over an 8-bit parallel bus, stored in a dual-port Block RAM frame buffer, and displayed centered within an 800×600 VGA signal — doubled 2×2 to fill a 640×480 area with black borders on all sides. The entire pipeline runs in programmable logic; there is no soft-core or embedded processor involved in capture, buffering, scaling, or display.</p>
+      <p>Two hardware switches provide runtime control: <strong>SW0</strong> freezes the current frame indefinitely, and <strong>SW1</strong> applies a real-time color-invert (negative) filter.</p>
+
+      <h3>My contribution</h3>
+      <p>My role centered on the complete VHDL and FPGA implementation. I wrote the camera-capture and dual-port frame-buffer modules from scratch, integrated the camera, memory, timing, and display subsystems, substantially modified the starter VGA and clock-generation architecture, implemented the startup camera configuration, and debugged clocking, memory-latency, image-alignment, and pixel-format problems.</p>
+
+      <div class="callout" style="border-left-color:var(--accent-2);">
+        <h4>Team context</h4>
+        <p><strong>Tyler Kometani</strong> — VHDL development, FPGA architecture, hardware implementation, integration, and debugging (frame_buffer.vhd and ov7670_capture.vhd written from scratch; camera_top, clk_wiz, and vga_sync substantially modified from CPE 487 starter code; i2c_config integrated and debugged). <strong>Bryan Barzola</strong> — project documentation, poster development, and conceptual input. AI was used as a troubleshooting and reference tool throughout (see the repository's AI Assistance Disclosure) — all VHDL was reviewed, understood, and debugged by the team.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE -->
+  <section class="case-section" id="architecture">
+    <div class="container prose">
+      <h2>System architecture</h2>
+      <p>Five modules make up the pipeline: a clock wizard generating two independent clocks, an SCCB/I2C configuration master, a three-state capture FSM, a dual-port Block RAM frame buffer, and a VGA sync generator. <code>camera_top.vhd</code> instantiates and wires all of them together, and additionally hosts the BRAM-latency compensation logic, the 2×2 pixel scaling/centering math, and the freeze/invert controls.</p>
+
+      <figure class="figure">
+        <img src="../assets/diagrams/block-diagram.png" alt="System block diagram showing the OV7670 camera connected through the capture module to the dual-port frame buffer, which feeds the VGA sync module and display, with a clock wizard and I2C configuration module supporting the pipeline" loading="lazy">
+        <figcaption>System block diagram (from the project repository)</figcaption>
+      </figure>
+
+      <h3>Pin mapping (Nexys A7-100T Pmod headers)</h3>
+      <table class="pin-table">
+        <thead><tr><th>Signal</th><th>Header pin</th><th>Function</th></tr></thead>
+        <tbody>
+          <tr><td>cam_pclk</td><td>JB10</td><td>Pixel clock — one byte per pulse</td></tr>
+          <tr><td>cam_vsync</td><td>JB1</td><td>Frame boundary</td></tr>
+          <tr><td>cam_href</td><td>JB2</td><td>Active row indicator</td></tr>
+          <tr><td>cam_d[7:0]</td><td>JA1–JA10</td><td>8-bit parallel pixel data</td></tr>
+          <tr><td>cam_xclk</td><td>JB4</td><td>~24 MHz clock supplied to the camera</td></tr>
+          <tr><td>cam_sioc / cam_siod</td><td>JB7 / JB8</td><td>SCCB (I2C-compatible) configuration bus</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- CAPTURE FSM -->
+  <section class="case-section" id="fsm">
+    <div class="container prose">
+      <h2>Capture FSM</h2>
+      <p>The OV7670 sends each pixel over two byte cycles on an 8-bit bus, so <code>ov7670_capture.vhd</code> runs a three-state Moore FSM to track camera timing and reassemble pixels:</p>
+      <ul>
+        <li><strong>WAIT_VSYNC</strong> — idles until a VSYNC pulse marks the start of a new frame, then resets row/column counters.</li>
+        <li><strong>WAIT_HREF</strong> — waits for HREF to go high, marking the start of an active row.</li>
+        <li><strong>CAPTURE</strong> — reads one byte per PCLK pulse while HREF is high; the first byte is latched, and the second byte is combined with it to form a complete 12-bit RGB pixel, which is written to the frame buffer at the calculated address.</li>
+      </ul>
+
+      <figure class="figure">
+        <img src="../assets/diagrams/capture-fsm.png" alt="State diagram for the ov7670_capture FSM showing transitions between WAIT_VSYNC, WAIT_HREF, and CAPTURE states" loading="lazy">
+        <figcaption>ov7670_capture.vhd state diagram (from the project repository)</figcaption>
+      </figure>
+
+      <div class="code-block">
+        <span class="code-label">ov7670_capture.vhd — state machine core</span>
+        <pre><code>CASE state IS
+    WHEN WAIT_VSYNC =&gt;
+        IF vsync = '1' THEN
+            row &lt;= (OTHERS =&gt; '0');
+            col &lt;= (OTHERS =&gt; '0');
+            state &lt;= WAIT_HREF;
+        END IF;
+
+    WHEN WAIT_HREF =&gt;
+        IF row &gt;= 240 THEN
+            state &lt;= WAIT_VSYNC;
+        ELSIF href = '1' THEN
+            col &lt;= (OTHERS =&gt; '0');
+            state &lt;= CAPTURE;
+        END IF;
+
+    WHEN CAPTURE =&gt;
+        IF href = '0' THEN
+            row &lt;= row + 1;
+            state &lt;= WAIT_HREF;
+        ELSE
+            IF byte_sel = '0' THEN
+                hi_byte &lt;= d;          -- first byte cycle
+                byte_sel &lt;= '1';
+            ELSE
+                dout &lt;= d(3 DOWNTO 0) &amp; hi_byte(3 DOWNTO 0) &amp; d(7 DOWNTO 4);
+                -- second byte cycle: combine into a 12-bit RGB pixel
+                ...
+            END IF;
+        END IF;
+END CASE;</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLOCK DOMAINS -->
+  <section class="case-section" id="clocks">
+    <div class="container prose">
+      <h2>Clock domains</h2>
+      <p>The camera capture path and the VGA display path run on independent clocks generated by a modified clock wizard: an approximately 24 MHz clock drives the camera's XCLK input and the capture FSM, while a separate ~40 MHz clock drives VGA timing and the display-side read logic. Because these two clock domains have no fixed phase relationship, the frame buffer had to be a true dual-port memory that could be written and read independently — one port clocked by the camera's pixel clock, the other by the VGA pixel clock — rather than a single-clock buffer with arbitration logic.</p>
+    </div>
+  </section>
+
+  <!-- FRAME BUFFER -->
+  <section class="case-section" id="buffer">
+    <div class="container prose">
+      <h2>Frame-buffer architecture</h2>
+      <p><code>frame_buffer.vhd</code> is a dual-port Block RAM sized for a full QVGA frame: 320 × 240 = 76,800 locations, each storing a 12-bit RGB pixel (4 bits red, 4 green, 4 blue). Port A is the write port, driven by <code>ov7670_capture</code> on the camera pixel clock; Port B is the read port, driven by the VGA sync logic on the 40 MHz display clock. The two ports operate independently with no shared arbitration.</p>
+
+      <h3>Pixel-address calculation</h3>
+      <p>The write-side address for each captured pixel is calculated directly from the current row and column counters:</p>
+      <div class="eq-block">addr = row × 320 + col &nbsp;&nbsp;<span style="color:var(--text-faint);">// 17-bit address, 320×240 = 76,800 locations</span></div>
+
+      <p>On the read side, the same addressing scheme is applied in reverse to map from display coordinates back to camera-frame coordinates (see the scaling section below).</p>
+    </div>
+  </section>
+
+  <!-- SCALING & CENTERING -->
+  <section class="case-section" id="scaling">
+    <div class="container prose">
+      <h2>Scaling and centering</h2>
+      <p>The lab's test monitor did not support 640×480 @ 60/72 Hz reliably, so the design targets 800×600 @ 60 Hz instead. The captured 320×240 image is scaled 2× in each dimension to 640×480, then centered inside the 800×600 frame with an 80px border on the left/right and a 60px border on the top/bottom.</p>
+
+      <div class="code-block">
+        <span class="code-label">camera_top.vhd — read-side scaling and centering</span>
+        <pre><code>IF col &gt;= 80 AND col &lt; 720 AND
+   row &gt;= 60 AND row &lt; 540 THEN
+    cam_col := (col - 80) / 2;
+    cam_row := (row - 60) / 2;
+    addr := cam_row * 320 + cam_col;
+    fb_addr_b &lt;= STD_LOGIC_VECTOR(to_unsigned(addr, 17));
+    in_frame &lt;= '1';
+ELSE
+    fb_addr_b &lt;= (OTHERS =&gt; '0');
+    in_frame &lt;= '0';   -- outside the image area: display black
+END IF;</code></pre>
+      </div>
+      <p>Dividing the display coordinate by 2 after subtracting the border offset maps every 2×2 block of VGA output pixels back to a single source pixel, and <code>in_frame</code> gates the color output to black whenever the current display position falls outside the centered image area.</p>
+    </div>
+  </section>
+
+  <!-- BRAM LATENCY -->
+  <section class="case-section" id="latency">
+    <div class="container prose">
+      <h2>BRAM-latency debugging</h2>
+      <p>Synchronous Block RAM returns read data one clock cycle after the address is presented. Left uncompensated, this delay misaligned the image by a pixel relative to the border logic — the <code>in_frame</code> gate and the returned pixel data were one cycle out of sync, corrupting the edges of the displayed image. The fix was to register the address calculation and the <code>in_frame</code> signal together in the same clocked process, so that both the gating decision and the corresponding BRAM output arrive at the display logic on the same cycle.</p>
+    </div>
+  </section>
+
+  <!-- SCCB CONFIG -->
+  <section class="case-section" id="sccb">
+    <div class="container prose">
+      <h2>SCCB / I2C camera configuration</h2>
+      <p>The OV7670 needs a startup register sequence over its SCCB bus (I2C-compatible) before it will output a usable video signal. <code>i2c_config.vhd</code> drives this sequence at startup: a 25 kHz SCCB clock, a 40 ms power-on delay before the first transmission, a 50 ms pause after the software-reset register, and open-drain behavior on the SIOD data line implemented with tri-state logic. Approximately 60 registers are configured, including the color-format registers (COM7/COM15) that select RGB444 output. The register set is sourced from Mike Field's published OV7670 configuration, with modifications for this project's color-mode setting.</p>
+    </div>
+  </section>
+
+  <!-- HARDWARE CONTROLS -->
+  <section class="case-section" id="controls">
+    <div class="container prose">
+      <h2>Hardware controls</h2>
+
+      <h3>SW0 — Freeze frame</h3>
+      <div class="code-block">
+        <span class="code-label">camera_top.vhd — freeze-frame write-enable gating</span>
+        <pre><code>capture_we &lt;= fb_we_a and not sw_freeze;
+-- when frozen, capture_we is forced to '0' so the BRAM
+-- stops being written; the VGA read port keeps running
+-- normally, displaying the last captured frame.</code></pre>
+      </div>
+
+      <h3>SW1 — Color invert</h3>
+      <div class="code-block">
+        <span class="code-label">camera_top.vhd — invert filter</span>
+        <pre><code>pixel_out &lt;= fb_dout XOR (sw_invert &amp; sw_invert &amp; sw_invert &amp; sw_invert &amp;
+                          sw_invert &amp; sw_invert &amp; sw_invert &amp; sw_invert &amp;
+                          sw_invert &amp; sw_invert &amp; sw_invert &amp; sw_invert);
+-- replicates the single switch bit across all 12 pixel bits;
+-- XOR with 0 leaves the pixel unchanged, XOR with 1 flips
+-- every bit, producing a real-time color-negative effect.</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section class="case-section" id="results">
+    <div class="container prose">
+      <h2>Results</h2>
+      <ul class="result-list">
+        <li><svg class="status-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg> Generates correct 800×600 @ 60 Hz VGA timing</li>
+        <li><svg class="status-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg> Centers the 640×480 scaled camera image inside 800×600 with black borders</li>
+        <li><svg class="status-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg> Captures live video responding to motion and lighting changes</li>
+        <li><svg class="status-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg> Stores and retrieves frames correctly through dual-port BRAM</li>
+        <li><svg class="status-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg> Startup SCCB/I2C camera configuration completes correctly</li>
+        <li><svg class="status-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg> Freeze-frame (SW0) and color-invert (SW1) controls both work correctly</li>
+        <li><svg class="status-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg> Final RGB color-channel calibration still requires refinement (see below)</li>
+      </ul>
+
+      <div class="two-col-figures" style="margin-top:28px;">
+        <figure class="figure">
+          <img src="../assets/images/bench-setup-1.jpg" alt="[CONFIRM CAPTION: hardware bench photo — Nexys A7 FPGA board wired to the OV7670 camera module during testing. Please confirm framing/description before publishing.]" loading="lazy">
+          <figcaption>Bench setup — [CONFIRM CAPTION]</figcaption>
+        </figure>
+        <figure class="figure">
+          <img src="../assets/images/bench-setup-2.jpg" alt="[CONFIRM CAPTION: hardware bench photo from project testing. Please confirm framing/description before publishing.]" loading="lazy">
+          <figcaption>Bench setup — [CONFIRM CAPTION]</figcaption>
+        </figure>
+      </div>
+      <p style="font-size:13.5px;color:var(--text-faint);">[CONFIRM: these are IMG_5264.png and IMG_5276.png from the repository, resized for the web. Swap captions above with a short factual description of what's actually pictured in each — e.g. "breadboard wiring close-up" vs. "full bench setup with monitor" — once confirmed.]</p>
+    </div>
+  </section>
+
+  <!-- REMAINING IMPROVEMENTS -->
+  <section class="case-section" id="improvements">
+    <div class="container prose">
+      <h2>Remaining improvements</h2>
+      <div class="callout">
+        <h4>Open engineering issue: color calibration</h4>
+        <p>Pixel byte ordering and color-channel mapping still produce visible color errors — the OV7670 outputs RGB444 data in GRB byte order rather than the expected RGB order, and some camera modules may be missing pull-up resistors on the SIOC/SIOD lines, which is a suspected contributor to the remaining blue-channel inaccuracy. The video pipeline, motion response, frame buffering, freeze frame, and invert filter all function correctly; full color accuracy remains an area for continued debugging rather than a claim this project makes.</p>
+      </div>
+      <p>Next steps identified for this design: re-verify the GRB-to-RGB byte remapping against the datasheet, confirm whether external pull-ups are needed on SIOC/SIOD for reliable SCCB communication on this camera module, and re-test color accuracy under controlled lighting.</p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-row">
+    <span>Tyler Kometani — Electrical Engineering · © <span id="year"></span></span>
+    <ul class="footer-links">
+      <li><a href="https://github.com/tkometani0512" target="_blank" rel="noopener">GitHub</a></li>
+      <li><a href="https://www.linkedin.com/in/tyler-kometani-47664233b" target="_blank" rel="noopener">LinkedIn</a></li>
+      <li><a href="mailto:tkometani0512@gmail.com">Email</a></li>
+    </ul>
+  </div>
+</footer>
+
+<script src="../script.js"></script>
+</body>
+</html>
